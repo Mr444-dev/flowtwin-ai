@@ -108,7 +108,16 @@ reports/generated/  metrics and test predictions (ignored by Git)
 
 ## Docker
 
-Build with `docker build -t flowtwin-ai .`. The container image does not include the research data or trained model. Run it with a persistent volume, download/prepare/train inside the container, then start the API. For local portfolio work, `start.ps1` is the simplest route.
+Build with `docker build -t flowtwin-ai .`. The image runs as an unprivileged user and excludes local data, models, reports, tests, and Git metadata from its build context. The container stores runtime files under `/app` (configurable with `FLOWTWIN_HOME`). Keep data in named volumes, and publish the web port only on localhost for local use:
+
+```powershell
+docker run --rm -v flowtwin-data:/app/data -v flowtwin-artifacts:/app/artifacts -v flowtwin-reports:/app/reports flowtwin-ai flowtwin download
+docker run --rm -v flowtwin-data:/app/data -v flowtwin-artifacts:/app/artifacts -v flowtwin-reports:/app/reports flowtwin-ai flowtwin prepare
+docker run --rm -v flowtwin-data:/app/data -v flowtwin-artifacts:/app/artifacts -v flowtwin-reports:/app/reports flowtwin-ai flowtwin train
+docker run --rm -p 127.0.0.1:8000:8000 -v flowtwin-data:/app/data -v flowtwin-artifacts:/app/artifacts -v flowtwin-reports:/app/reports flowtwin-ai
+```
+
+For local portfolio work, `start.ps1` is the simplest route.
 
 ## Scope
 
@@ -116,6 +125,6 @@ This is a learning and portfolio demo built on a public, historical event log. I
 
 ## Security and validation
 
-The parser uses `defusedxml`, accepts only `.xes` and `.xes.gz` files, caps compressed input at 4 GiB, caps decompressed XML at 8 GiB, and rejects traces with more than 100,000 events. Database builds use a unique temporary file and replace the prior database only after a successful parse. The downloader enforces a 4 GiB limit, checks the advertised transfer length when present, verifies the published MD5, and removes incomplete files. API search values and replay prefixes have bounds; SQL parameters are bound rather than interpolated. CSV text that spreadsheet software could interpret as a formula is prefixed before export.
+The parser uses `defusedxml`, accepts only `.xes` and `.xes.gz` files, caps compressed input at 4 GiB, caps decompressed XML at 8 GiB, and bounds total cases/events, XML nesting, trace/event attributes, retained data per trace, identifiers, activity names, and distinct activity/transition counts. Unused XML attributes and nested payloads are discarded during streaming. Database builds use a unique temporary file and replace the prior database only after a successful parse. The downloader enforces a 4 GiB limit, checks the advertised transfer length when present, stays on HTTPS, verifies the published MD5, and uses a unique temporary file before replacing the target. API responses include browser security headers and are not cached; the CLI disables request access logs to avoid recording case IDs from query strings. API search values and replay prefixes have bounds; SQL parameters are bound rather than interpolated. CSV text that spreadsheet software could interpret as a formula is prefixed before export.
 
 The dashboard binds to localhost by default. The generated `joblib` model is a trusted local artifact: do not load a model file supplied by an untrusted party, because pickle-based formats can execute code when loaded. MD5 is used only to identify the published research file and detect accidental corruption; it is not a modern cryptographic security guarantee.

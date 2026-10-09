@@ -36,7 +36,9 @@ def main() -> None:
     elif args.command == "serve":
         import uvicorn
 
-        uvicorn.run("flowtwin.web:app", host=args.host, port=args.port, reload=False)
+        # API requests may carry case identifiers in their query strings.
+        # Avoid writing those identifiers to the default access log.
+        uvicorn.run("flowtwin.web:app", host=args.host, port=args.port, reload=False, access_log=False)
 
 
 if __name__ == "__main__":

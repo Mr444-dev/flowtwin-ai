@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import hashlib
-import urllib.request
+import os
+import tempfile
 from pathlib import Path
+from urllib.parse import urlsplit
+import urllib.request
 
 from .config import DATASET_MD5, DATASET_NAME, DATASET_URL, RAW_DIR
 
@@ -14,7 +17,6 @@ def download_dataset(force: bool = False) -> Path:
     """Download the original compressed XES file and verify its configured MD5."""
     RAW_DIR.mkdir(parents=True, exist_ok=True)
     target = RAW_DIR / DATASET_NAME
-    partial = target.with_suffix(target.suffix + ".part")
 
     if target.exists() and not force:
         actual = _md5(target)
@@ -23,14 +25,19 @@ def download_dataset(force: bool = False) -> Path:
             return target
         print("The existing file has a different checksum; downloading it again.")
 
-    request = urllib.request.Request(
-        DATASET_URL,
-        headers={"User-Agent": "FlowTwin-AI-demo/0.1 (research-data download)"},
-    )
-    print("Downloading the official XES file from 4TU.ResearchData; this may take a while.")
-    digest = hashlib.md5()
+    fd, partial_name = tempfile.mkstemp(prefix=f".{target.name}.", suffix=".part", dir=RAW_DIR)
+    os.close(fd)
+    partial = Path(partial_name)
     try:
+        request = urllib.request.Request(
+            DATASET_URL,
+            headers={"User-Agent": "FlowTwin-AI-demo/0.1 (research-data download)"},
+        )
+        print("Downloading the official XES file from 4TU.ResearchData; this may take a while.")
+        digest = hashlib.md5()
         with urllib.request.urlopen(request, timeout=60) as response, partial.open("wb") as out:
+            if urlsplit(response.geturl()).scheme.lower() != "https":
+                raise ValueError("The dataset download must remain on HTTPS.")
             total = response.headers.get("Content-Length")
             total_bytes = int(total) if total and total.isdigit() else None
             if total_bytes is not None and total_bytes > MAX_DOWNLOAD_BYTES:

@@ -80,6 +80,16 @@ class WebApiTests(unittest.TestCase):
         self.assertEqual(replay.json()["remaining_actual_hours"], 1.0)
         self.assertIsNone(replay.json()["forecast"])
 
+    def test_security_headers_are_present(self) -> None:
+        response = self.client.get("/")
+        self.assertEqual(response.headers["x-content-type-options"], "nosniff")
+        self.assertEqual(response.headers["x-frame-options"], "DENY")
+        self.assertEqual(response.headers["referrer-policy"], "no-referrer")
+        self.assertIn("script-src 'self'", response.headers["content-security-policy"])
+        self.assertIn("frame-ancestors 'none'", response.headers["content-security-policy"])
+        api_response = self.client.get("/api/dashboard")
+        self.assertEqual(api_response.headers["cache-control"], "no-store")
+
     def test_search_is_parameterized_and_query_length_is_bounded(self) -> None:
         injected = self.client.get("/api/cases", params={"q": "%' OR 1=1 --"})
         oversized = self.client.get("/api/cases", params={"q": "x" * 81})

@@ -24,6 +24,9 @@ class _Response(io.BytesIO):
     def __exit__(self, *_: object) -> None:
         self.close()
 
+    def geturl(self) -> str:
+        return "https://example.invalid/file"
+
 
 class DownloadTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -49,7 +52,15 @@ class DownloadTests(unittest.TestCase):
         root = self._configure(payload, {"Content-Length": str(len(payload))})
         target = download.download_dataset()
         self.assertEqual(target.read_bytes(), payload)
-        self.assertFalse(target.with_suffix(".gz.part").exists())
+        self.assertEqual(list(root.iterdir()), [target])
+
+    def test_valid_cached_file_does_not_create_temporary_download(self) -> None:
+        payload = b"already downloaded"
+        root = self._configure(payload)
+        (root / "sample.xes.gz").write_bytes(payload)
+        target = download.download_dataset()
+        self.assertEqual(target.read_bytes(), payload)
+        self.assertEqual(list(root.iterdir()), [target])
 
     def test_wrong_checksum_removes_partial_file(self) -> None:
         payload = b"not the expected source"
@@ -72,6 +83,16 @@ class DownloadTests(unittest.TestCase):
         root = self._configure(payload, {"Content-Length": "99"})
         with self.assertRaisesRegex(ValueError, "Incomplete transfer"):
             download.download_dataset()
+        self.assertEqual(list(root.iterdir()), [])
+
+    def test_insecure_redirect_is_rejected(self) -> None:
+        payload = b"safe payload"
+        root = self._configure(payload)
+        response = _Response(payload)
+        response.geturl = lambda: "http://example.invalid/file"
+        with patch.object(download.urllib.request, "urlopen", return_value=response):
+            with self.assertRaisesRegex(ValueError, "must remain on HTTPS"):
+                download.download_dataset()
         self.assertEqual(list(root.iterdir()), [])
 
 

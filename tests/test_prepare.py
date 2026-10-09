@@ -131,6 +131,60 @@ class PrepareTests(unittest.TestCase):
                 prepare.prepare_data(self.source)
         self.assertFalse(self.db.exists())
 
+    def test_total_event_limit_is_enforced(self) -> None:
+        self._write_log(_xes_trace("case-1"))
+        with patch.object(prepare, "DB_PATH", self.db), patch.object(prepare, "MAX_TOTAL_EVENTS", 2):
+            with self.assertRaisesRegex(ValueError, "limit of 2 events"):
+                prepare.prepare_data(self.source)
+        self.assertFalse(self.db.exists())
+
+    def test_case_limit_is_enforced(self) -> None:
+        self._write_log(_xes_trace("case-1") + _xes_trace("case-2"))
+        with patch.object(prepare, "DB_PATH", self.db), patch.object(prepare, "MAX_CASES", 1):
+            with self.assertRaisesRegex(ValueError, "limit of 1 cases"):
+                prepare.prepare_data(self.source)
+        self.assertFalse(self.db.exists())
+
+    def test_distinct_activity_limit_is_enforced(self) -> None:
+        self._write_log(_xes_trace("case-1"))
+        with patch.object(prepare, "DB_PATH", self.db), patch.object(prepare, "MAX_DISTINCT_ACTIVITIES", 1):
+            with self.assertRaisesRegex(ValueError, "distinct activities"):
+                prepare.prepare_data(self.source)
+        self.assertFalse(self.db.exists())
+
+    def test_event_attribute_count_limit_is_enforced(self) -> None:
+        self._write_log(_xes_trace("case-1"))
+        with patch.object(prepare, "DB_PATH", self.db), patch.object(prepare, "MAX_EVENT_ATTRIBUTES", 2):
+            with self.assertRaisesRegex(ValueError, "event exceeds the limit of 2 attributes"):
+                prepare.prepare_data(self.source)
+        self.assertFalse(self.db.exists())
+
+    def test_trace_attribute_count_limit_is_enforced(self) -> None:
+        trace = _xes_trace("case-1").replace(
+            '<string key="concept:name" value="case-1" />',
+            '<string key="concept:name" value="case-1" />'
+            '<string key="unused" value="discarded" />',
+        )
+        self._write_log(trace)
+        with patch.object(prepare, "DB_PATH", self.db), patch.object(prepare, "MAX_TRACE_ATTRIBUTES", 1):
+            with self.assertRaisesRegex(ValueError, "case exceeds the limit of 1 trace attributes"):
+                prepare.prepare_data(self.source)
+        self.assertFalse(self.db.exists())
+
+    def test_attribute_value_length_limit_is_enforced(self) -> None:
+        self._write_log(_xes_trace("case-1"))
+        with patch.object(prepare, "DB_PATH", self.db), patch.object(prepare, "MAX_ATTRIBUTE_VALUE_CHARS", 5):
+            with self.assertRaisesRegex(ValueError, "attribute value exceeds the limit"):
+                prepare.prepare_data(self.source)
+        self.assertFalse(self.db.exists())
+
+    def test_retained_data_per_trace_limit_is_enforced(self) -> None:
+        self._write_log(_xes_trace("case-1"))
+        with patch.object(prepare, "DB_PATH", self.db), patch.object(prepare, "MAX_RETAINED_CHARS_PER_TRACE", 10):
+            with self.assertRaisesRegex(ValueError, "retained event data"):
+                prepare.prepare_data(self.source)
+        self.assertFalse(self.db.exists())
+
     def test_gzip_log_is_supported(self) -> None:
         compressed = self.root / "sample.xes.gz"
         with gzip.open(compressed, "wb") as stream:

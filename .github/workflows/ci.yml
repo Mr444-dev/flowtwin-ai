@@ -18,14 +18,31 @@ jobs:
       matrix:
         python-version: ["3.11", "3.12"]
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
       - name: Install application and test dependencies
         run: python -m pip install -e ".[test]"
+      - name: Audit installed dependencies
+        run: |
+          python -m pip install pip-audit
+          pip-audit
       - name: Compile source and tests
         run: python -m compileall -q src tests
       - name: Run unit and synthetic integration tests
         run: python -m unittest discover -s tests -v
+
+  container:
+    name: Docker image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Build image
+        run: docker build --tag flowtwin-ai .
+      - name: Verify non-root runtime and writable-data root
+        run: |
+          test "$(docker image inspect flowtwin-ai --format '{{.Config.User}}')" = "flowtwin"
+          docker run --rm flowtwin-ai python -c "from flowtwin.config import DB_PATH; assert str(DB_PATH) == '/app/data/processed/flowtwin.sqlite3'"
