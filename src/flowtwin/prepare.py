@@ -13,18 +13,47 @@ from typing import Any, BinaryIO, Iterator
 
 from defusedxml import ElementTree as ET
 
-from .config import DB_PATH, RAW_DIR, TERMINAL_ACTIVITIES
+from .config import (
+    CATEGORICAL_CASE_FIELDS,
+    DB_PATH,
+    NUMERIC_CASE_FIELDS,
+    RAW_DIR,
+    TERMINAL_ACTIVITIES,
+)
 
 
 MAX_COMPRESSED_BYTES = 4 * 1024**3
 MAX_UNCOMPRESSED_BYTES = 8 * 1024**3
 MAX_EVENTS_PER_TRACE = 100_000
+MAX_TOTAL_EVENTS = 10_000_000
+MAX_CASES = 250_000
+MAX_TRACE_ATTRIBUTES = 256
+MAX_EVENT_ATTRIBUTES = 256
+MAX_XML_DEPTH = 256
+MAX_ATTRIBUTE_VALUE_CHARS = 4_096
+MAX_ACTIVITY_NAME_CHARS = 512
+MAX_CASE_ID_CHARS = 128
+MAX_RETAINED_CHARS_PER_TRACE = 16 * 1024 * 1024
+MAX_DISTINCT_ACTIVITIES = 10_000
+MAX_DISTINCT_TRANSITIONS = 100_000
 APPLICATION_START_ATTRIBUTES = {
     "case:ApplicationID",
     "case:RequestedAmount",
     "case:LoanGoal",
     "case:ApplicationType",
 }
+RETAINED_EVENT_ATTRIBUTES = (
+    set(NUMERIC_CASE_FIELDS)
+    | set(CATEGORICAL_CASE_FIELDS)
+    | APPLICATION_START_ATTRIBUTES
+    | {"concept:name", "time:timestamp", "lifecycle:transition", "case:concept:name"}
+)
+TRACE_ATTRIBUTE_KEYS = (
+    {"concept:name", "case:concept:name"}
+    | APPLICATION_START_ATTRIBUTES
+    | set(NUMERIC_CASE_FIELDS)
+    | set(CATEGORICAL_CASE_FIELDS)
+)
 
 
 def prepare_data(xes_path: Path | None = None) -> dict[str, Any]:
@@ -44,22 +73,32 @@ def prepare_data(xes_path: Path | None = None) -> dict[str, Any]:
     fd, temp_name = tempfile.mkstemp(prefix=f".{DB_PATH.name}.", suffix=".building", dir=DB_PATH.parent)
     os.close(fd)
     temp_path = Path(temp_name)
-    con = sqlite3.connect(temp_path)
-    _create_schema(con)
+    con: sqlite3.Connection | None = None
+    try:
+        con = sqlite3.connect(temp_path)
+        _create_schema(con)
+    except Exception:
+        if con is not None:
+            con.close()
+        temp_path.unlink(missing_ok=True)
+        raise
+    assert con is not None
     quality = Counter()
     transitions: Counter[tuple[str, str]] = Counter()
     activity_counts: Counter[str] = Counter()
-    seen_cases: set[str] = set()
 
     try:
         opener = gzip.open if source.suffix.lower() == ".gz" else open
         with opener(source, "rb") as stream:
             limited_stream = _BoundedReader(stream, MAX_UNCOMPRESSED_BYTES)
             for case_id, trace_attrs, raw_events in _iter_trace_records(limited_stream, quality):
-                if case_id in seen_cases:
+                inserted = con.execute("INSERT OR IGNORE INTO seen_case_ids VALUES (?)", (case_id,))
+                if inserted.rowcount == 0:
                     quality["duplicate_case_ids"] += 1
                     continue
-                seen_cases.add(case_id)
+                quality["unique_case_ids"] += 1
+                if quality["unique_case_ids"] > MAX_CASES:
+                    raise ValueError(f"The XES file exceeds the limit of {MAX_CASES:,} cases.")
                 events = _normalize_events(raw_events, trace_attrs, quality)
                 if not events:
                     quality["cases_without_valid_events"] += 1
@@ -67,8 +106,17 @@ def prepare_data(xes_path: Path | None = None) -> dict[str, Any]:
 
                 activities = [str(e["a"]) for e in events]
                 for activity in activities:
+                    if activity not in activity_counts and len(activity_counts) >= MAX_DISTINCT_ACTIVITIES:
+                        raise ValueError(
+                            f"The XES file exceeds the limit of {MAX_DISTINCT_ACTIVITIES:,} distinct activities."
+                        )
                     activity_counts[activity] += 1
-                transitions.update(zip(activities, activities[1:]))
+                for transition in zip(activities, activities[1:]):
+                    if transition not in transitions and len(transitions) >= MAX_DISTINCT_TRANSITIONS:
+                        raise ValueError(
+                            f"The XES file exceeds the limit of {MAX_DISTINCT_TRANSITIONS:,} distinct transitions."
+                        )
+                    transitions[transition] += 1
 
                 start = _parse_time(events[0]["t"])
                 end = _parse_time(events[-1]["t"])
@@ -117,6 +165,7 @@ def prepare_data(xes_path: Path | None = None) -> dict[str, Any]:
             "quality": dict(quality),
         }
         con.execute("INSERT INTO metadata VALUES (?, ?)", ("dataset", json.dumps(source_metadata)))
+        con.execute("DROP TABLE seen_case_ids")
         con.commit()
         con.close()
         temp_path.replace(DB_PATH)
@@ -147,8 +196,6 @@ class _BoundedReader:
 def _create_schema(con: sqlite3.Connection) -> None:
     con.executescript(
         """
-        PRAGMA journal_mode=OFF;
-        PRAGMA synchronous=OFF;
         CREATE TABLE cases (
             case_id TEXT PRIMARY KEY,
             started_at TEXT NOT NULL,
@@ -165,6 +212,7 @@ def _create_schema(con: sqlite3.Connection) -> None:
                                   PRIMARY KEY(from_activity, to_activity));
         CREATE TABLE activity_counts (activity TEXT PRIMARY KEY, count INTEGER);
         CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+        CREATE TABLE seen_case_ids (case_id TEXT PRIMARY KEY);
         """
     )
 
@@ -178,6 +226,8 @@ def _iter_trace_records(
     attrs: dict[str, Any] = {}
     events: list[dict[str, Any]] = []
     event_count = 0
+    trace_attribute_count = 0
+    retained_chars = 0
 
     for action, element in ET.iterparse(stream, events=("start", "end")):
         tag = _local(element.tag)
@@ -189,7 +239,11 @@ def _iter_trace_records(
                 attrs = {}
                 events = []
                 event_count = 0
+                trace_attribute_count = 0
+                retained_chars = 0
             stack.append(element)
+            if len(stack) > MAX_XML_DEPTH:
+                raise ValueError(f"The XES XML exceeds the nesting limit of {MAX_XML_DEPTH} elements.")
             continue
 
         parent = stack[-2] if len(stack) > 1 else None
@@ -200,13 +254,25 @@ def _iter_trace_records(
                 event_count += 1
                 if event_count > MAX_EVENTS_PER_TRACE:
                     raise ValueError(f"A case exceeds the limit of {MAX_EVENTS_PER_TRACE:,} events.")
+                quality["events_seen"] += 1
+                if quality["events_seen"] > MAX_TOTAL_EVENTS:
+                    raise ValueError(f"The XES file exceeds the limit of {MAX_TOTAL_EVENTS:,} events.")
                 event = _read_event(element, quality)
                 if event is not None:
+                    retained_chars += _event_character_count(event)
+                    if retained_chars > MAX_RETAINED_CHARS_PER_TRACE:
+                        raise ValueError(
+                            "A case exceeds the limit of "
+                            f"{MAX_RETAINED_CHARS_PER_TRACE // 1024 // 1024} MiB of retained event data."
+                        )
                     events.append(event)
                 element.clear()
             elif parent is trace_element:
+                trace_attribute_count += 1
+                if trace_attribute_count > MAX_TRACE_ATTRIBUTES:
+                    raise ValueError(f"A case exceeds the limit of {MAX_TRACE_ATTRIBUTES} trace attributes.")
                 key = element.attrib.get("key")
-                if key:
+                if key and key in TRACE_ATTRIBUTE_KEYS:
                     attrs[key] = _typed_value(element)
                 element.clear()
             elif element is trace_element and tag == "trace":
@@ -216,6 +282,19 @@ def _iter_trace_records(
                 element.clear()
                 trace_element = None
                 trace_finished = True
+            elif (
+                parent is not None
+                and _local(parent.tag) == "event"
+                and len(stack) >= 3
+                and stack[-3] is trace_element
+            ):
+                # Keep direct event attributes until _read_event sees the
+                # completed event; its nested payloads are still cleared.
+                pass
+            else:
+                # Nested attribute payloads are not used by this demo. Clear
+                # them as they are parsed so they cannot accumulate in memory.
+                element.clear()
         elif tag != "log":
             # Global XES declarations are not used by the demo.
             element.clear()
@@ -226,7 +305,7 @@ def _iter_trace_records(
 
 
 def _read_event(element: ET.Element, quality: Counter[str]) -> dict[str, Any] | None:
-    event = _parse_attributes(element)
+    event = _parse_attributes(element, RETAINED_EVENT_ATTRIBUTES)
     if not event.get("concept:name"):
         quality["events_missing_activity"] += 1
         return None
@@ -234,10 +313,19 @@ def _read_event(element: ET.Element, quality: Counter[str]) -> dict[str, Any] | 
     if not timestamp:
         quality["events_missing_timestamp"] += 1
         return None
+    activity = str(event["concept:name"])
+    timestamp = str(timestamp)
+    lifecycle = str(event.get("lifecycle:transition") or "")
+    if len(activity) > MAX_ACTIVITY_NAME_CHARS:
+        raise ValueError(f"An activity name exceeds the limit of {MAX_ACTIVITY_NAME_CHARS} characters.")
+    if len(timestamp) > 64:
+        raise ValueError("An event timestamp exceeds the limit of 64 characters.")
+    if len(lifecycle) > 64:
+        raise ValueError("A lifecycle transition exceeds the limit of 64 characters.")
     return {
-        "a": str(event["concept:name"]),
-        "t": str(timestamp),
-        "l": str(event.get("lifecycle:transition") or ""),
+        "a": activity,
+        "t": timestamp,
+        "l": lifecycle,
         "x": {key: value for key, value in event.items() if key.startswith("case:")},
     }
 
@@ -254,7 +342,10 @@ def _finish_trace(
     if not case_id:
         quality["cases_missing_id"] += 1
         return None
-    return str(case_id), attrs, events
+    case_id = str(case_id)
+    if len(case_id) > MAX_CASE_ID_CHARS:
+        raise ValueError(f"A case ID exceeds the limit of {MAX_CASE_ID_CHARS} characters.")
+    return case_id, attrs, events
 
 
 def _normalize_events(
@@ -313,17 +404,21 @@ def _normalize_events(
     return result
 
 
-def _parse_attributes(element: ET.Element) -> dict[str, Any]:
+def _parse_attributes(element: ET.Element, allowed_keys: set[str]) -> dict[str, Any]:
     result: dict[str, Any] = {}
-    for child in element:
+    for index, child in enumerate(element, start=1):
+        if index > MAX_EVENT_ATTRIBUTES:
+            raise ValueError(f"An event exceeds the limit of {MAX_EVENT_ATTRIBUTES} attributes.")
         key = child.attrib.get("key")
-        if key:
+        if key and key in allowed_keys:
             result[key] = _typed_value(child)
     return result
 
 
 def _typed_value(element: ET.Element) -> Any:
     value = element.attrib.get("value", "")
+    if len(value) > MAX_ATTRIBUTE_VALUE_CHARS:
+        raise ValueError(f"An attribute value exceeds the limit of {MAX_ATTRIBUTE_VALUE_CHARS} characters.")
     kind = _local(element.tag)
     if kind in ("int", "integer", "long"):
         try:
@@ -362,3 +457,10 @@ def _outcome(activity: str) -> str:
 
 def _visible_case_attrs(values: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in values.items() if key in APPLICATION_START_ATTRIBUTES}
+
+
+def _event_character_count(event: dict[str, Any]) -> int:
+    count = len(event["a"]) + len(event["t"]) + len(event.get("l", ""))
+    for key, value in (event.get("x") or {}).items():
+        count += len(key) + len(str(value))
+    return count
