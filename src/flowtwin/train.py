@@ -119,17 +119,16 @@ def train_model() -> dict[str, Any]:
     encoder = ColumnTransformer(
         transformers=[
             ("categorical", OneHotEncoder(handle_unknown="ignore", sparse_output=False), CATEGORICAL_FEATURES),
-            (
-                "numeric",
-                SimpleImputer(strategy="constant", fill_value=-1.0, keep_empty_features=True),
-                NUMERIC_FEATURES,
-            ),
+            ("numeric", "passthrough", NUMERIC_FEATURES),
         ],
         remainder="drop",
     )
     model = Pipeline(
         steps=[
             ("features", encoder),
+            # Impute after concatenation so fully empty optional columns are
+            # filled consistently even when pandas inferred an object dtype.
+            ("impute", SimpleImputer(strategy="constant", fill_value=-1.0, keep_empty_features=True)),
             # Optional case attributes can be entirely absent in a dataset or
             # training window. Impute them, then drop constant columns before
             # histogram binning so empty/single-valued inputs remain trainable.
