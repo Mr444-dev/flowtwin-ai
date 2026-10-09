@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#101a2b">
+  <title>FlowTwin AI · Predictive Process Monitoring</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="FlowTwin AI home">
+        <span class="brand-mark">F<span>↗</span></span>
+        <span><strong>FlowTwin</strong><small>PROCESS INTELLIGENCE</small></span>
+      </a>
+      <div class="top-meta"><span class="live-dot"></span><span>OFFLINE DEMO</span><span class="divider"></span><span>BPI CHALLENGE 2017</span></div>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div>
+          <p class="eyebrow">PREDICTIVE PROCESS MONITORING</p>
+          <h1>See what may happen <em>next.</em></h1>
+          <p class="hero-copy">Forecast the remaining time for a case from the events observed so far. The model is trained on a public process log and evaluated on later, unseen cases.</p>
+        </div>
+        <div class="hero-note"><span class="note-icon">↳</span><span><b>Historical process data</b><br>Records from 2016–2017 · this is not a live view of a bank's operations.</span></div>
+      </section>
+
+      <div id="loading" class="loading-panel">Loading the event log summary…</div>
+      <section id="empty-state" class="empty-panel hidden">
+        <div class="empty-symbol">⇩</div>
+        <div><p class="eyebrow">LOAD THE SOURCE DATA</p><h2>Waiting for the BPI 2017 event log</h2>
+          <p>On first run, the app downloads the original XES file from 4TU.ResearchData, verifies its checksum, builds the database, and trains the model.</p>
+          <code>.\start.ps1</code>
+          <p class="muted">You can also run each step separately. See the README for instructions.</p>
+        </div>
+      </section>
+
+      <div id="dashboard" class="hidden">
+        <section class="metric-grid" id="summary-cards" aria-label="Dataset summary"></section>
+
+        <section class="panel source-strip">
+          <div class="source-icon">↗</div>
+          <div><b>Source: BPI Challenge 2017</b><span id="source-line">A historical loan application event log published by 4TU.ResearchData.</span></div>
+          <a href="https://doi.org/10.4121/uuid:5f3067df-f10b-45da-b98b-86ae4c7a310b" target="_blank" rel="noreferrer">Dataset DOI <span>↗</span></a>
+        </section>
+
+        <section class="section-heading"><div><p class="eyebrow">01 / PROCESS OVERVIEW</p><h2>What's in the event log</h2></div><p>Frequent activities and transitions across recorded cases.</p></section>
+        <section class="chart-grid">
+          <article class="panel chart-panel"><div class="panel-heading"><div><h3>Cases started</h3><p>Application start month</p></div><span class="chart-tag">HISTORICAL</span></div><div id="volume-chart" class="chart-area"></div></article>
+          <article class="panel chart-panel"><div class="panel-heading"><div><h3>Most frequent activities</h3><p>Events in the log</p></div><span class="chart-tag">TOP 9</span></div><div id="activity-chart" class="bar-list"></div></article>
+        </section>
+
+        <section class="section-heading section-heading-tight"><div><p class="eyebrow">TRACES AND OUTCOMES</p><h2>Most frequent transitions</h2></div><p>Transitions show event order, not the causes of delays.</p></section>
+        <section class="panel table-panel"><div class="table-wrap"><table><thead><tr><th>PREVIOUS ACTIVITY</th><th>NEXT ACTIVITY</th><th>TRANSITION COUNT</th></tr></thead><tbody id="transitions-body"></tbody></table></div><div class="outcome-area"><div class="panel-heading"><div><h3>Recorded final status</h3><p>The completion rule is documented in the README.</p></div></div><div id="outcome-chart" class="bar-list compact"></div></div></section>
+
+        <section class="section-heading"><div><p class="eyebrow">02 / MODEL EVALUATION</p><h2>Does ML beat a simple median?</h2></div><p>Chronological test · test cases were not used for training.</p></section>
+        <div id="model-empty" class="panel model-empty hidden">The model has not been trained yet. Run <code>flowtwin train</code>.</div>
+        <section id="model-section" class="model-grid hidden">
+          <article class="panel model-score"><div class="panel-heading"><div><h3>Mean absolute error</h3><p>Test cases · calendar hours</p></div><span class="chart-tag">MAE ↓</span></div><div class="score-main"><span id="model-mae" class="score-number">—</span><span class="score-unit">h</span></div><div class="score-sub" id="model-ci"></div><div id="model-bars" class="compare-bars"></div><p class="micro-note" id="improvement-note"></p></article>
+          <article class="panel model-score"><div class="panel-heading"><div><h3>Prediction interval coverage</h3><p>Test time that falls inside the estimated interval</p></div><span class="chart-tag">90% NOMINAL</span></div><div class="score-main"><span id="coverage" class="score-number">—</span><span class="score-unit">%</span></div><div class="coverage-track"><span id="coverage-track"></span></div><div class="score-sub" id="interval-note"></div><p class="micro-note">The interval is calibrated on validation errors. Its coverage can change when the process drifts.</p></article>
+          <article class="panel stage-panel"><div class="panel-heading"><div><h3>Error by process stage</h3><p>Each case contributes up to six observations</p></div></div><div id="stage-table" class="stage-table"></div></article>
+        </section>
+
+        <section class="section-heading"><div><p class="eyebrow">03 / REPLAY A CASE</p><h2>Forecast during the process</h2></div><p>Move the slider to show only the history available at that point.</p></section>
+        <section class="replay-grid">
+          <article class="panel replay-panel">
+            <div class="panel-heading"><div><h3>Select a case</h3><p>Historical replay, not an active case</p></div><span class="chart-tag">REPLAY</span></div>
+            <label class="field-label" for="case-search">SEARCH BY ID OR SELECT A CASE</label>
+            <input id="case-search" class="search-input" type="search" placeholder="Type part of a case ID…" autocomplete="off">
+            <select id="case-select"></select>
+            <div class="range-label"><label class="field-label" for="prefix-range">HISTORY VISIBLE TO THE MODEL</label><span id="prefix-label">—</span></div>
+            <input id="prefix-range" type="range" min="1" max="1" value="1">
+            <div class="case-facts" id="case-facts"></div>
+            <div class="history-heading"><span>RECENT EVENTS IN THIS PREFIX</span><span>UP TO 8</span></div>
+            <ol id="history-list" class="history-list"></ol>
+          </article>
+          <article class="panel forecast-panel">
+            <div class="forecast-top"><div><p class="eyebrow">ESTIMATED TIME TO COMPLETION</p><div class="forecast-value"><span id="forecast-value">—</span><small>hours</small></div></div><div class="forecast-icon">⏱</div></div>
+            <div class="forecast-band"><span>VALIDATION-BASED INTERVAL</span><b id="forecast-band">—</b></div>
+            <div class="replay-divider"></div>
+            <div class="forecast-row"><span>Simple baseline · activity median</span><b id="baseline-value">—</b></div>
+            <div class="forecast-row"><span>Actual remaining time in this historical case</span><b id="actual-value">—</b></div>
+            <div id="replay-message" class="replay-message"></div>
+            <div class="forecast-foot">The forecast uses only the observed prefix. Later events are shown only for retrospective comparison.</div>
+          </article>
+        </section>
+
+        <section class="notes-grid">
+          <article class="panel note-panel"><p class="eyebrow">HOW TO READ THIS</p><h3>This is calendar time</h3><p>Elapsed time includes nights, weekends, queues, and customer waiting. It is not a measure of active staff work or a service-level agreement.</p></article>
+          <article class="panel note-panel"><p class="eyebrow">DATA QUALITY</p><h3>Open cases are censored</h3><p id="quality-note">Incomplete traces are not assigned a fabricated completion time. The completion rule and excluded-case counts are shown here.</p></article>
+        </section>
+      </div>
+    </main>
+    <footer><span>FlowTwin AI · portfolio demo</span><span>Dataset: van Dongen (2017), 4TU.ResearchData</span><a href="/api/metrics.csv">Download test predictions (CSV)</a></footer>
+  </div>
+  <script src="/static/app.js" defer></script>
+</body>
+</html>
