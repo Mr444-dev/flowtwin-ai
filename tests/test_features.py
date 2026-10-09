@@ -26,7 +26,7 @@ class FeatureTests(unittest.TestCase):
         first = build_features(self.events, 1)
         self.assertEqual(first["current_activity"], "A_Submitted")
         self.assertEqual(first["elapsed_hours"], 0)
-        self.assertIsNone(first["requested_amount"])
+        self.assertEqual(first["requested_amount"], -1.0)
         self.assertEqual(first["loan_goal"], "Unknown")
 
     def test_prefix_features_use_only_values_already_seen(self) -> None:

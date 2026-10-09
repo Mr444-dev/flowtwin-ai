@@ -89,7 +89,7 @@ class PrepareTests(unittest.TestCase):
         first = build_features(events, 1, initial_attrs)
         last = build_features(events, 2, initial_attrs)
         self.assertEqual(first["requested_amount"], 12000)
-        self.assertIsNone(first["credit_score"])
+        self.assertEqual(first["credit_score"], -1.0)
         self.assertEqual(last["credit_score"], 700)
 
     def test_nonterminal_last_event_is_censored(self) -> None:

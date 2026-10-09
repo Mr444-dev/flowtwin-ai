@@ -51,6 +51,10 @@ def build_features(
                 visible[key] = value
 
     for source, feature in NUMERIC_CASE_FIELDS.items():
+        # All configured numeric attributes are non-negative in the source
+        # domain, so -1 is an explicit, stable sentinel for "not observed yet".
+        # This keeps all-empty columns numeric and lets training distinguish
+        # an unobserved attribute without relying on pandas' inferred dtype.
         features[feature] = _number(visible.get(source))
     for source, feature in CATEGORICAL_CASE_FIELDS.items():
         value = visible.get(source)
@@ -63,11 +67,11 @@ def _parse_time(value: str) -> datetime:
     return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed.astimezone(timezone.utc)
 
 
-def _number(value: Any) -> float | None:
+def _number(value: Any) -> float:
     if value in (None, ""):
-        return None
+        return -1.0
     try:
         result = float(value)
-        return result if math.isfinite(result) else None
+        return result if math.isfinite(result) else -1.0
     except (TypeError, ValueError):
-        return None
+        return -1.0

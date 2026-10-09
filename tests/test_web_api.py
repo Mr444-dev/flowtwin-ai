@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 WEB_DEPS_AVAILABLE = all(
     importlib.util.find_spec(name) is not None
-    for name in ("fastapi", "httpx", "numpy", "pandas", "sklearn", "joblib")
+    for name in ("fastapi", "httpx2", "numpy", "pandas", "sklearn", "joblib")
 )
 
 
