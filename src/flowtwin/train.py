@@ -10,6 +10,8 @@ import numpy as np
 import pandas as pd
 from sklearn.compose import ColumnTransformer
 from sklearn.ensemble import HistGradientBoostingRegressor
+from sklearn.feature_selection import VarianceThreshold
+from sklearn.impute import SimpleImputer
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder
 
@@ -117,13 +119,21 @@ def train_model() -> dict[str, Any]:
     encoder = ColumnTransformer(
         transformers=[
             ("categorical", OneHotEncoder(handle_unknown="ignore", sparse_output=False), CATEGORICAL_FEATURES),
-            ("numeric", "passthrough", NUMERIC_FEATURES),
+            (
+                "numeric",
+                SimpleImputer(strategy="constant", fill_value=-1.0, keep_empty_features=True),
+                NUMERIC_FEATURES,
+            ),
         ],
         remainder="drop",
     )
     model = Pipeline(
         steps=[
             ("features", encoder),
+            # Optional case attributes can be entirely absent in a dataset or
+            # training window. Impute them, then drop constant columns before
+            # histogram binning so empty/single-valued inputs remain trainable.
+            ("nonconstant", VarianceThreshold()),
             (
                 "regressor",
                 HistGradientBoostingRegressor(
